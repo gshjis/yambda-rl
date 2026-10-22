@@ -35,6 +35,9 @@ meta = {
 }
 open(f"{d}/kernel-metadata.json", "w").write(json.dumps(meta, indent=2))
 code = f'''import os, subprocess, sys
+if "--quick" in {extra!r}:
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # pinpoint async CUDA asserts in smoke runs
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 REPO = "https://github.com/gshjis/yambda-rl.git"
 SHA = "{sha}"
 subprocess.run(["git", "clone", "--quiet", REPO, "/kaggle/working/repo"], check=True)

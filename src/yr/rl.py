@@ -42,8 +42,14 @@ def generate(model, prompts: list[list[int]], group: int, horizon: int, ctx: int
         from .model import rank_all
 
         top = rank_all(h, model.tok.weight, topk=top_k)
+        if int(top.max()) >= model.vocab or int(top.min()) < 0:
+            raise RuntimeError(f"top-k indices out of range: {int(top.min())}..{int(top.max())} / {model.vocab}")
+        if not torch.isfinite(h).all():
+            raise RuntimeError("non-finite hidden states before sampling")
         scores = torch.einsum("bd,bkd->bk", h, model.tok.weight[top]) / temperature
-        probs = torch.softmax(scores, dim=1)
+        probs = torch.softmax(scores.float(), dim=1)
+        probs = torch.nan_to_num(probs, nan=0.0)
+        probs = probs / probs.sum(1, keepdim=True).clamp_min(1e-12)
         pick = torch.multinomial(probs, 1).squeeze(1)
         a = top[torch.arange(len(seqs), device=device), pick]
         for i in range(len(seqs)):
