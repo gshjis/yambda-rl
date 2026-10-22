@@ -70,19 +70,20 @@ def _score_topk(models, hist: Split, ev: EvalSet, ranked: np.ndarray, counts: np
         feats.extend([[0.5, 0.5, min(len(seq), rl_ctx) / rl_ctx]] * k)
     item_feats = item_features(np.load(os.path.join(cfg["data_dir"], "items.npz")), "cpu")
     out = {"ratio": [], "like": []}
-    for start in range(0, len(hists), 4096):
-        part = slice(start, min(start + 4096, len(hists)))
-        x, ln = _pad(hists[part], device)
-        cand = torch.tensor(cands[part], dtype=torch.long, device=device)
-        fs = torch.cat([torch.tensor(np.array(feats[part]), dtype=torch.float32, device=device),
-                        item_feats[cand.cpu()].to(device)], dim=1)
-        rs, ls = [], []
-        for m in models:
-            o = m(x, cand, fs, ln)
-            rs.append(torch.sigmoid(o["ratio"]))
-            ls.append(torch.sigmoid(o["like"]))
-        out["ratio"].append(torch.stack(rs).mean(0).cpu().numpy())
-        out["like"].append(torch.stack(ls).mean(0).cpu().numpy())
+    with torch.no_grad():
+        for start in range(0, len(hists), 4096):
+            part = slice(start, min(start + 4096, len(hists)))
+            x, ln = _pad(hists[part], device)
+            cand = torch.tensor(cands[part], dtype=torch.long, device=device)
+            fs = torch.cat([torch.tensor(np.array(feats[part]), dtype=torch.float32, device=device),
+                            item_feats[cand.cpu()].to(device)], dim=1)
+            rs, ls = [], []
+            for m in models:
+                o = m(x, cand, fs, ln)
+                rs.append(torch.sigmoid(o["ratio"]))
+                ls.append(torch.sigmoid(o["like"]))
+            out["ratio"].append(torch.stack(rs).mean(0).cpu().numpy())
+            out["like"].append(torch.stack(ls).mean(0).cpu().numpy())
     res = {key: np.concatenate(v) for key, v in out.items()}
     return {f"rm_{key}_top{k}": float(v.mean()) for key, v in res.items()}
 
