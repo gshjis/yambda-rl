@@ -126,7 +126,7 @@ def score_actions(models, prompts: list[list[int]], actions: list[list[int]], hi
             arr = torch.stack(outs[k])
             scores[k].append(arr.mean(0))
             if k == "ratio":
-                scores["ratio_std"].append(arr.std(0))
+                scores["ratio_std"].append(arr.std(0) if arr.shape[0] > 1 else torch.zeros_like(arr[0]))
     return {k: torch.cat(v).reshape(b, h).cpu().numpy() for k, v in scores.items()}
 
 
