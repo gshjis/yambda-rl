@@ -256,7 +256,7 @@ def run(cfg: dict, log) -> dict:
     train = Split(os.path.join(data_dir, "train_seq.npz"))
     val = Split(os.path.join(data_dir, "val_seq.npz"))
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    item_feats = item_features(items, device)
+    item_feats = item_features(items, "cpu")
     n_models = int(rcfg["ensemble"])
     paths, metrics = [], []
     for k in range(n_models):
