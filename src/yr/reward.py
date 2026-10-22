@@ -29,7 +29,7 @@ def item_features(items: dict, device: str) -> torch.Tensor | None:
         np.clip(length, 0, 600) / 600.0,
         items["like_rate"].astype(np.float64),
     ], axis=1).astype(np.float32)
-    return torch.from_numpy(feats)
+    return torch.from_numpy(feats).to(device)
 
 
 class RewardModel(nn.Module):
