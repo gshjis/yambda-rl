@@ -61,7 +61,7 @@ def _behavior(ranked: np.ndarray, counts: np.ndarray, total_events: float, histo
 
 def _score_topk(models, hist: Split, ev: EvalSet, ranked: np.ndarray, counts: np.ndarray, cfg: dict,
                 device: str, k: int = 10) -> dict:
-    rl_ctx = cfg["data"]["max_seq_len"]
+    rl_ctx = min(int(cfg["rm"]["ctx"]), int(cfg["data"]["max_seq_len"]))
     hists, cands, feats = [], [], []
     for i in range(len(ev)):
         seq = ev.hist_items(i)

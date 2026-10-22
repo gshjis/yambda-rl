@@ -68,6 +68,8 @@ def evaluate(model: GPT, ev: EvalSet, cfg: dict, device: str, max_users: int | N
         keep = np.arange(n)
     hists = [ev.hist_items(int(i)) for i in keep]
     lengths = np.array([len(h) for h in hists], dtype=np.int64)
+    was_training = model.training
+    model.eval()
     ranked = rank_users(
         model, hists, lengths, cfg["eval"]["topk"], cfg["eval"]["batch_users"],
         cfg["eval"]["score_chunk"], device,
@@ -75,6 +77,8 @@ def evaluate(model: GPT, ev: EvalSet, cfg: dict, device: str, max_users: int | N
     targets = [ev.targets[int(i)] for i in keep]
     res = per_user_metrics(ranked, targets, model.vocab)
     res["n_users"] = int(len(keep))
+    if was_training:
+        model.train()
     return res
 
 

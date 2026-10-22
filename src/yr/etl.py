@@ -126,9 +126,11 @@ def _save_sequences(path: str, user_rows: dict, vocab_sorted: np.ndarray, batch:
 
     items_flat, offsets = _flatten(items, np.int32)
     ts_flat = np.fromiter((v for x in ts_rows for v in x), dtype=np.int32, count=len(items_flat))
-    ratio_flat = np.fromiter((v for x in ratio_rows for v in x), dtype=np.uint8, count=len(items_flat))
-    organic_flat = np.fromiter((v for x in organic_rows for v in x), dtype=bool, count=len(items_flat))
-    liked_flat = np.fromiter((v for x in liked_rows for v in x), dtype=bool, count=len(items_flat))
+    ratio_flat = np.fromiter((int(v) for x in ratio_rows for v in x), dtype=np.uint8, count=len(items_flat))
+    organic_flat = np.fromiter((int(v) for x in organic_rows for v in x), dtype=np.uint8,
+                               count=len(items_flat)).astype(bool)
+    liked_flat = np.fromiter((int(v) for x in liked_rows for v in x), dtype=np.uint8,
+                             count=len(items_flat)).astype(bool)
 
     dt_flat = np.zeros(len(items_flat), dtype=np.int32)
     active_flat = np.zeros(len(items_flat), dtype=bool)
