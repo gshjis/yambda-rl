@@ -104,8 +104,9 @@ def run(cfg: dict, log, resume: bool = False) -> dict:
             if step > 0 and step % cfg["train"]["eval_every"] == 0:
                 res = evaluate(model, ev, cfg, device, max_users=cfg["train"]["val_users"])
                 ndcg = res["summary"]["ndcg@10"]
-                log.info("val ndcg@10 %.4f recall@100 %.4f (n=%d)", ndcg,
-                         res["summary"]["recall@100"], res["n_users"])
+                log.info("val ndcg@10 %.4f recall@100 %.4f (n=%d) max|emb|=%.3e", ndcg,
+                         res["summary"]["recall@100"], res["n_users"],
+                         float(model.tok.weight.abs().max()))
                 history.append({"step": step, "val_ndcg@10": ndcg})
                 if ndcg > best:
                     best = ndcg

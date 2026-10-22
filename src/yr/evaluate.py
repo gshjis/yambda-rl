@@ -40,6 +40,8 @@ def load_model(path: str, device: str) -> GPT:
     model = GPT(**ckpt["config"])
     model.load_state_dict(ckpt["state_dict"])
     bad = sum(int((~torch.isfinite(p)).sum()) for p in model.parameters())
+    mx = max(float(p.abs().max()) for p in model.parameters())
+    print(f"[load_model] {path} nonfinite={bad} max|w|={mx:.3e}", flush=True)
     if bad:
         raise RuntimeError(f"{bad} non-finite parameters in {path}")
     return model.to(device).eval()

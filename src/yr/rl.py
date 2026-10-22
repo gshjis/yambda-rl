@@ -45,7 +45,12 @@ def generate(model, prompts: list[list[int]], group: int, horizon: int, ctx: int
         if int(top.max()) >= model.vocab or int(top.min()) < 0:
             raise RuntimeError(f"top-k indices out of range: {int(top.min())}..{int(top.max())} / {model.vocab}")
         if not torch.isfinite(h).all():
-            raise RuntimeError("non-finite hidden states before sampling")
+            worst = max(((float(p.abs().max()), n) for n, p in model.named_parameters()), key=lambda t: t[0])
+            raise RuntimeError(
+                f"non-finite hidden states: {int((~torch.isfinite(h)).sum())} of {h.numel()}, "
+                f"x range {int(x.min())}..{int(x.max())}, t={x.shape[1]}, "
+                f"max|w|={worst[0]:.3e} at {worst[1]}, h nan={int(torch.isnan(h).sum())} "
+                f"inf={int(torch.isinf(h).sum())}")
         scores = torch.einsum("bd,bkd->bk", h, model.tok.weight[top]) / temperature
         probs = torch.softmax(scores.float(), dim=1)
         probs = torch.nan_to_num(probs, nan=0.0)
@@ -168,7 +173,7 @@ def run(cfg: dict, log) -> dict:
     base_ckpt = os.path.join(cfg["out_dir"], "ckpt", "base_best.pt")
     if not os.path.exists(base_ckpt):
         base_ckpt = os.path.join(cfg["out_dir"], "ckpt", "base.pt")
-    policy = load_model(base_ckpt, device).train()
+    policy = load_model(base_ckpt, device)
     ref = load_model(base_ckpt, device).eval()
     for p in ref.parameters():
         p.requires_grad_(False)
@@ -186,8 +191,8 @@ def run(cfg: dict, log) -> dict:
                for u in chosen]
     prompt_stats = []
     for u in chosen:
-        lo = val.offsets[u]
-        prompt_stats.append([float(val.ratio[lo:].mean()) / 100.0, float(val.organic[lo:].mean()),
+        lo, hi = val.offsets[u], val.offsets[u + 1]
+        prompt_stats.append([float(val.ratio[lo:hi].mean()) / 100.0, float(val.organic[lo:hi].mean()),
                              min(lengths[u], cfg["data"]["max_seq_len"]) / cfg["data"]["max_seq_len"]])
     prompt_stats = np.array(prompt_stats, dtype=np.float32)
 
