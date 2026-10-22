@@ -76,3 +76,15 @@ rl:
 analysis:
   bootstrap: 10000
   multi_step_users: 1000
+
+# One kernel per table: base and RM are trained once, then each variant is a full
+# RL run + test evaluation. Keep the list short enough to fit the 12h session.
+ablate:
+  variants:
+    - {tag: rl_kl0, kl_beta: 0.0}
+    - {tag: rl_kl01, kl_beta: 0.01}
+    - {tag: rl_kl20, kl_beta: 0.2}
+    - {tag: rl_like, reward: like}
+    - {tag: rl_blend, reward: blend}
+    - {tag: rl_dpo, method: dpo}
+    - {tag: rl_bc, method: filtered_bc}

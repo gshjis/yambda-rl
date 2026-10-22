@@ -11,6 +11,8 @@ import shutil
 import sys
 import time
 
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from yr import analyze, baselines, eda, etl, evaluate, reward, rl, train_lm  # noqa: E402
@@ -39,7 +41,7 @@ def _quick(cfg: dict) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="all",
-                    choices=["all", "etl", "eda", "baseline", "train", "eval", "rm", "rl", "analyze"])
+                    choices=["all", "etl", "eda", "baseline", "train", "eval", "rm", "rl", "analyze", "ablate"])
     ap.add_argument("--config", default=None)
     ap.add_argument("--source", default="auto", choices=["auto", "kaggle", "hf"])
     ap.add_argument("--quick", action="store_true")
@@ -97,6 +99,33 @@ def main() -> None:
             tag = cfg["rl"].get("tag") or f"rl_{cfg['rl']['method']}"
             evaluate.run_test(cfg, log, ckpt=os.path.join(cfg["out_dir"], f"{tag}.pt"), tag=tag)
             analyze.run(cfg, log)
+        if args.stage == "ablate":
+            import copy
+
+            import pandas as pd
+
+            rms()
+            if not os.path.exists(os.path.join(cfg["out_dir"], "metrics_base.json")):
+                evaluate.run_test(cfg, log, tag="base")
+            rows = []
+            for i, variant in enumerate(cfg["ablate"]["variants"]):
+                sub = copy.deepcopy(cfg)
+                sub["rl"].update({k: v for k, v in variant.items() if k != "tag"})
+                sub["rl"]["tag"] = variant.get("tag") or f"rl_{i}"
+                log.info("ablate %d/%d: %s", i + 1, len(cfg["ablate"]["variants"]), sub["rl"]["tag"])
+                rl.run(sub, log)
+                evaluate.run_test(sub, log, ckpt=os.path.join(sub["out_dir"], f"{sub['rl']['tag']}.pt"),
+                                  tag=sub["rl"]["tag"])
+                hist = json.load(open(os.path.join(sub["out_dir"], f"metrics_{sub['rl']['tag']}_train.json")))
+                m = json.load(open(os.path.join(sub["out_dir"], f"metrics_{sub['rl']['tag']}.json")))["summary"]
+                rows.append({"tag": sub["rl"]["tag"], "method": sub["rl"]["method"],
+                             "reward": sub["rl"]["reward"], "kl_beta": sub["rl"]["kl_beta"],
+                             "horizon": sub["rl"]["horizon"],
+                             "mean_reward": float(np.mean([h["reward"] for h in hist["history"]])),
+                             "final_reward": hist["history"][-1]["reward"],
+                             "final_kl": hist["history"][-1]["kl"], **m})
+            pd.DataFrame(rows).to_csv(os.path.join(cfg["out_dir"], "ablation.csv"), index=False)
+            log.info("ablation table:\n%s", pd.DataFrame(rows).to_string())
         if args.stage == "analyze":
             analyze.run(cfg, log)
         ok = True
