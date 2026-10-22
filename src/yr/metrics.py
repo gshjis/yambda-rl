@@ -28,10 +28,9 @@ def per_user_metrics(ranked: np.ndarray, targets: list[np.ndarray], catalog_size
             ideal = min(len(tgt), k)
             out[f"ndcg@{k}"][u] = _dcg(hits) / _dcg(np.ones(ideal))
             out[f"recall@{k}"][u] = hits.sum() / len(tgt)
-        hits10 = np.isin(top[:10], tgt)
-        if hits10.any():
-            pos = np.flatnonzero(hits10)
-            out["map@10"][u] = float((np.arange(1, len(pos) + 1) / (pos + 1)).sum() / min(len(tgt), 10))
+            if hits.any():
+                pos = np.flatnonzero(hits)
+                out[f"map@{k}"][u] = (np.arange(1, len(pos) + 1) / (pos + 1)).sum() / ideal
     summary = {m: float(v.mean()) for m, v in out.items()}
     for k in ks:
         summary[f"coverage@{k}"] = float(np.unique(ranked[:, :k]).size / catalog_size)
