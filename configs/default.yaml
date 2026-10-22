@@ -1,0 +1,78 @@
+seed: 42
+work_dir: /kaggle/working
+data_dir: /kaggle/working/processed
+out_dir: /kaggle/working/artifacts
+
+data:
+  # Official Yambda constants (benchmarks/yambda/constants.py).
+  last_timestamp: 26000000
+  test_size: 86400
+  val_size: 86400
+  gap_size: 1800
+  min_played_ratio: 50
+  max_seq_len: 200
+  # Public Kaggle mirror with the official train/val/test split.
+  input_root: /kaggle/input
+  hf_base: https://huggingface.co/datasets/yandex/yambda/resolve/main/flat/50m
+
+model:
+  n_layer: 4
+  n_head: 4
+  n_embd: 128
+  dropout: 0.1
+  ctx: 200
+
+train:
+  steps: 8000
+  batch_size: 32
+  lr: 3.0e-4
+  weight_decay: 0.01
+  warmup: 300
+  grad_clip: 1.0
+  negatives: 8192
+  val_users: 2000
+  eval_every: 1000
+  log_every: 50
+  time_budget_min: 150
+  dtype: fp16
+
+eval:
+  topk: 100
+  batch_users: 64
+  score_chunk: 100000
+
+rm:
+  d_model: 128
+  n_layer: 2
+  n_head: 4
+  ctx: 100
+  max_events: 3000000
+  negatives_per_pos: 3
+  epochs: 2
+  batch_size: 256
+  lr: 1.0e-3
+  ensemble: 3
+  users_per_model: 0.8
+
+rl:
+  method: grpo
+  prompts: 1024
+  batch_prompts: 16
+  group_size: 8
+  horizon: 5
+  temperature: 1.0
+  top_k: 100
+  lr: 1.0e-4
+  kl_beta: 0.05
+  gamma: 1.0
+  epochs: 1
+  reward: ratio
+  pessimistic: 0.5
+  popularity_penalty: 0.0
+  repeat_penalty: 0.2
+  length_penalty: 0.0
+  clip_adv: 5.0
+
+analysis:
+  bootstrap: 10000
+  multi_step_users: 1000

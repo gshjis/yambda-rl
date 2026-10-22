@@ -1,0 +1,10 @@
+# Runtime dependencies. Kaggle images already ship torch, numpy, pandas,
+# matplotlib and pyarrow; duckdb is the only package we install explicitly.
+torch>=2.1
+numpy>=1.26
+pandas>=2.0
+pyarrow>=14
+duckdb>=1.0
+matplotlib>=3.7
+PyYAML>=6.0
+tqdm>=4.66

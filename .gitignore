@@ -1,0 +1,16 @@
+# Data and artifacts
+data/
+.kaggle/
+*.npz
+*.parquet
+*.pt
+*.pth
+__pycache__/
+*.pyc
+.venv/
+results/*
+!results/.gitkeep
+figures/*
+!figures/.gitkeep
+
+.cortexkit/
