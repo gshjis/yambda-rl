@@ -50,7 +50,12 @@ def run(cfg: dict, log, resume: bool = False) -> dict:
     scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
     ds = WindowDataset(train, cfg["data"]["max_seq_len"], samples=10**9, seed=cfg["seed"])
     loader = torch.utils.data.DataLoader(
-        ds, batch_size=cfg["train"]["batch_size"], collate_fn=lambda b: collate_windows(b, pad_id=0),
+        ds, batch_size=cfg["train"]["batch_size"],
+        sampler=torch.utils.data.RandomSampler(
+            ds, replacement=True,
+            num_samples=cfg["train"]["steps"] * cfg["train"]["batch_size"] + cfg["train"]["batch_size"],
+        ),
+        collate_fn=lambda b: collate_windows(b, pad_id=0),
         num_workers=0, drop_last=True,
     )
     start_step = 0
