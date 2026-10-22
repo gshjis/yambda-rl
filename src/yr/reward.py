@@ -54,10 +54,12 @@ class RewardModel(nn.Module):
         ids = torch.cat([x, cand[:, None]], dim=1)
         pos = torch.arange(t + 1, device=x.device)
         h = self.tok(ids) + self.pos(pos)
-        mask = torch.arange(t + 1, device=x.device)[None, :] > lengths[:, None]  # True = pad
+        # history pads sit at [lengths, t); the candidate at index t must stay visible
+        idx = torch.arange(t + 1, device=x.device)[None, :]
+        mask = (idx >= lengths[:, None]) & (idx < t)
         for blk in self.blocks:
             h = blk(h, key_padding_mask=mask)
-        last = h[torch.arange(b, device=x.device), lengths]
+        last = h[:, t]
         z = self.ln(last) + self.feat(feats)
         out = self.head(z)
         return {name: out[:, i] for i, name in enumerate(HEADS)}

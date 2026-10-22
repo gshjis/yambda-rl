@@ -114,6 +114,9 @@ def score_actions(models, prompts: list[list[int]], actions: list[list[int]], hi
         cand = torch.tensor(cands[part], dtype=torch.long, device=device)
         fs = torch.tensor(np.stack(feats[part]), dtype=torch.float32, device=device)
         fs = torch.cat([fs, item_feats[cand]], dim=1)
+        if not torch.isfinite(fs).all():
+            bad_cols = torch.nonzero(~torch.isfinite(fs).all(0)).flatten().tolist()
+            raise RuntimeError(f"non-finite reward features in columns {bad_cols}")
         outs = {k: [] for k in ("ratio", "like", "session", "return")}
         for m in models:
             o = m(x, cand, fs, ln)
@@ -195,6 +198,10 @@ def run(cfg: dict, log) -> dict:
         prompt_stats.append([float(val.ratio[lo:hi].mean()) / 100.0, float(val.organic[lo:hi].mean()),
                              min(lengths[u], cfg["data"]["max_seq_len"]) / cfg["data"]["max_seq_len"]])
     prompt_stats = np.array(prompt_stats, dtype=np.float32)
+    if not np.isfinite(prompt_stats).all():
+        cols = np.unique(np.where(~np.isfinite(prompt_stats))[1]).tolist()
+        log.warning("non-finite prompt stats in columns %s, zeroing them", cols)
+        prompt_stats = np.nan_to_num(prompt_stats, nan=0.0, posinf=0.0, neginf=0.0)
 
     opt = torch.optim.AdamW(policy.parameters(), lr=rl["lr"], betas=(0.9, 0.95))
     samples = []
@@ -211,6 +218,8 @@ def run(cfg: dict, log) -> dict:
             seq_stats = np.repeat(prompt_stats[idx], g, axis=0)
             scores = score_actions(models, seq_prompts, actions, seq_stats, item_feats, items, cfg, device)
             rewards = _reward(scores, seq_prompts, actions, item_feats_np, cfg)
+            if not np.isfinite(rewards).all():
+                raise RuntimeError(f"non-finite rewards in batch {start}: {scores}")
             ret = _returns(rewards, rl["gamma"])
             hz = int(rl["horizon"])
             if rl["method"] == "grpo":
