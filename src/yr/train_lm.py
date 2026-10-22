@@ -91,9 +91,12 @@ def run(cfg: dict, log, resume: bool = False) -> dict:
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["train"]["grad_clip"])
+            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["train"]["grad_clip"])
             scaler.step(opt)
             scaler.update()
+            if not torch.isfinite(loss) or not torch.isfinite(gnorm):
+                log.error("non-finite loss %.4f or grad norm %.4f at step %d", float(loss), float(gnorm), step)
+                break
             if step % cfg["train"]["log_every"] == 0:
                 log.info("step %d loss %.4f lr %.2e %.0f tok/s", step, loss.item(), lr,
                          cfg["train"]["batch_size"] * cfg["data"]["max_seq_len"] * cfg["train"]["log_every"] / (time.time() - t0))

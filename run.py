@@ -29,7 +29,7 @@ def _set(cfg: dict, expr: str) -> None:
 
 
 def _quick(cfg: dict) -> None:
-    cfg["train"].update(steps=40, eval_every=20, val_users=50, time_budget_min=10, warmup=5)
+    cfg["train"].update(steps=40, eval_every=20, val_users=50, time_budget_min=10, warmup=5, log_every=10)
     cfg["rm"].update(max_events=4000, epochs=1, ensemble=1)
     cfg["rl"].update(prompts=16, batch_prompts=2, group_size=2, horizon=3, epochs=1)
     cfg["analysis"].update(bootstrap=200, multi_step_users=20)

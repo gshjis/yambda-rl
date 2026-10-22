@@ -39,6 +39,9 @@ def load_model(path: str, device: str) -> GPT:
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model = GPT(**ckpt["config"])
     model.load_state_dict(ckpt["state_dict"])
+    bad = sum(int((~torch.isfinite(p)).sum()) for p in model.parameters())
+    if bad:
+        raise RuntimeError(f"{bad} non-finite parameters in {path}")
     return model.to(device).eval()
 
 
