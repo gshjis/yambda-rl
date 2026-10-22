@@ -41,7 +41,7 @@ def generate(model, prompts: list[list[int]], group: int, horizon: int, ctx: int
         h = model(x)[torch.arange(len(seqs), device=device), ln - 1]
         from .model import rank_all
 
-        top = rank_all(h, model.tok.weight, top_k=top_k)
+        top = rank_all(h, model.tok.weight, topk=top_k)
         scores = torch.einsum("bd,bkd->bk", h, model.tok.weight[top]) / temperature
         probs = torch.softmax(scores, dim=1)
         pick = torch.multinomial(probs, 1).squeeze(1)
