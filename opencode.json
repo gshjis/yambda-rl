@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "graphify": {
+        "type": "local",
+        "command": [
+          "/home/gshjis/.local/share/pipx/venvs/graphifyy/bin/python",
+          "-m",
+          "graphify.serve",
+          "/home/gshjis/Projects/yambda/graphify-out/graph.json"
+        ],
+        "enabled": true
+      }
+    }
+  }
+}
