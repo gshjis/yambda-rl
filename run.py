@@ -94,7 +94,7 @@ def main() -> None:
         if args.stage in ("all", "rl"):
             rms()
             rl.run(cfg, log)
-            tag = f"rl_{cfg['rl']['method']}"
+            tag = cfg["rl"].get("tag") or f"rl_{cfg['rl']['method']}"
             evaluate.run_test(cfg, log, ckpt=os.path.join(cfg["out_dir"], f"{tag}.pt"), tag=tag)
             analyze.run(cfg, log)
         if args.stage == "analyze":

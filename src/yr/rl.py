@@ -256,11 +256,11 @@ def run(cfg: dict, log) -> dict:
                     "return": float(ret[i]),
                 })
 
-    tag = f"rl_{rl['method']}"
+    tag = cfg["rl"].get("tag") or f"rl_{rl['method']}"
     torch.save({"config": policy.config, "state_dict": policy.state_dict()},
                os.path.join(cfg["out_dir"], f"{tag}.pt"))
     json_dump({"history": hist, "method": rl["method"], "reward": rl["reward"]},
-              os.path.join(cfg["out_dir"], "metrics_rl_train.json"))
+              os.path.join(cfg["out_dir"], f"metrics_{tag}_train.json"))
     json_dump(samples[:5000], os.path.join(cfg["out_dir"], f"{tag}_samples.json"))
     log.info("rl done: mean reward %.4f", float(np.mean([h['reward'] for h in hist])) if hist else 0.0)
     return {"history": hist}

@@ -23,7 +23,7 @@ model:
   ctx: 200
 
 train:
-  steps: 8000
+  steps: 30000
   batch_size: 32
   lr: 3.0e-4
   weight_decay: 0.01
@@ -31,9 +31,9 @@ train:
   grad_clip: 1.0
   negatives: 8192
   val_users: 2000
-  eval_every: 1000
-  log_every: 50
-  time_budget_min: 150
+  eval_every: 3000
+  log_every: 100
+  time_budget_min: 240
   dtype: fp16
 
 eval:
@@ -46,9 +46,9 @@ rm:
   n_layer: 2
   n_head: 4
   ctx: 100
-  max_events: 3000000
+  max_events: 1500000
   negatives_per_pos: 3
-  epochs: 2
+  epochs: 1
   batch_size: 256
   lr: 1.0e-3
   ensemble: 3
