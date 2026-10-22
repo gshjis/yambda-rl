@@ -68,14 +68,14 @@ def _score_topk(models, hist: Split, ev: EvalSet, ranked: np.ndarray, counts: np
         hists.extend([seq] * k)
         cands.extend(ranked[i, :k].tolist())
         feats.extend([[0.5, 0.5, min(len(seq), rl_ctx) / rl_ctx]] * k)
-    item_feats = item_features(np.load(os.path.join(cfg["data_dir"], "items.npz")), device)
+    item_feats = item_features(np.load(os.path.join(cfg["data_dir"], "items.npz")), "cpu")
     out = {"ratio": [], "like": []}
     for start in range(0, len(hists), 4096):
         part = slice(start, min(start + 4096, len(hists)))
         x, ln = _pad(hists[part], device)
         cand = torch.tensor(cands[part], dtype=torch.long, device=device)
         fs = torch.cat([torch.tensor(np.array(feats[part]), dtype=torch.float32, device=device),
-                        item_feats[cand]], dim=1)
+                        item_feats[cand.cpu()].to(device)], dim=1)
         rs, ls = [], []
         for m in models:
             o = m(x, cand, fs, ln)
