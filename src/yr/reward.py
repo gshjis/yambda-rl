@@ -275,7 +275,8 @@ def run(cfg: dict, log) -> dict:
                 out = model(x, cand, feats, ln)
                 loss = 0.0
                 w = {"ratio": 1.0, "like": 1.0, "session": 0.5, "return": 0.5}
-                loss = loss + w["ratio"] * (F.mse_loss(torch.sigmoid(out["ratio"]), labels["ratio"], reduction="none")
+                loss = loss + w["ratio"] * (F.mse_loss(torch.sigmoid(out["ratio"]), labels["ratio"].to(device),
+                                                       reduction="none")
                                             * mask_ratio.to(device)).sum() / mask_ratio.sum().clamp(min=1)
                 for h in ("like", "session", "return"):
                     loss = loss + w[h] * F.binary_cross_entropy_with_logits(out[h], labels[h].to(device))
