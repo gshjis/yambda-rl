@@ -242,8 +242,9 @@ def run(cfg: dict, log, source: str = "auto") -> dict:
 
     with Timer(log, "test history"):
         con.execute(
-            "CREATE VIEW history_events AS SELECT uid, item_id, timestamp, 'listen' AS event_type "
-            "FROM train_listens UNION ALL SELECT uid, item_id, timestamp, 'listen' FROM val_listens"
+            "CREATE VIEW history_events AS SELECT uid, item_id, timestamp, played_ratio_pct, is_organic "
+            "FROM train_listens UNION ALL SELECT uid, item_id, timestamp, played_ratio_pct, is_organic "
+            "FROM val_listens"
         )
         hist = _load_seq(con, "history_events", vocab, liked=False)
         uid_ev = np.repeat(hist["uids"], np.diff(hist["offsets"]))
