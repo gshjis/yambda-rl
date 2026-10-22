@@ -109,7 +109,7 @@ def main() -> None:
             shutil.rmtree(cfg["data_dir"], ignore_errors=True)
             shutil.rmtree(os.path.join(cfg["out_dir"], "ckpt"), ignore_errors=True)
             for f in os.listdir(cfg["out_dir"]):
-                if f.startswith("rm_") and f.endswith(".pt"):
+                if (f.startswith("rm_") or f.startswith("rl_")) and f.endswith(".pt"):
                     os.remove(os.path.join(cfg["out_dir"], f))
     if not ok:
         sys.exit(1)

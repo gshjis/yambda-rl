@@ -20,6 +20,7 @@ def run(cfg: dict, log) -> dict:
     os.makedirs(fig_dir, exist_ok=True)
     items = np.load(os.path.join(data_dir, "items.npz"))
     train = Split(os.path.join(data_dir, "train_seq.npz"))
+    test_seq = Split(os.path.join(data_dir, "test_seq.npz"))
     hist = Split(os.path.join(data_dir, "test_history.npz"))
     test_t = Split(os.path.join(data_dir, "test_targets.npz"))
 
@@ -41,7 +42,8 @@ def run(cfg: dict, log) -> dict:
         "liked_share": float(train.liked.mean()),
         "mean_played_ratio": float(train.ratio.mean()),
         "train_max_ts": int(train.ts.max()),
-        "split_ok": True,  # official split files; ETL builds test history from train+val only
+        "test_min_ts": int(test_seq.ts.min()),
+        "split_ok": bool(train.ts.max() < test_seq.ts.min()),
     }
 
     fig, ax = plt.subplots()

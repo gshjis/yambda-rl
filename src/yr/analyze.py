@@ -64,7 +64,7 @@ def _score_topk(models, hist: Split, ev: EvalSet, ranked: np.ndarray, counts: np
     rl_ctx = min(int(cfg["rm"]["ctx"]), int(cfg["data"]["max_seq_len"]))
     hists, cands, feats = [], [], []
     for i in range(len(ev)):
-        seq = ev.hist_items(i)
+        seq = ev.hist_items(i)[-rl_ctx:]
         hists.extend([seq] * k)
         cands.extend(ranked[i, :k].tolist())
         feats.extend([[0.5, 0.5, min(len(seq), rl_ctx) / rl_ctx]] * k)

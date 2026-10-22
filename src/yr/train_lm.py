@@ -83,10 +83,10 @@ def run(cfg: dict, log, resume: bool = False) -> dict:
             lr = _lr(step, cfg)
             for g in opt.param_groups:
                 g["lr"] = lr
-            mask = torch.arange(x.shape[1], device=device)[None, :] < lengths.to(device)[:, None]
             with torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
                 h = model(x)
-                loss = sampled_softmax_loss(h, y, model.tok.weight, mask=mask,
+                last = h[torch.arange(x.shape[0], device=device), lengths.to(device) - 1]
+                loss = sampled_softmax_loss(last, y.unsqueeze(1), model.tok.weight,
                                             uniform_neg=cfg["train"]["negatives"])
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()

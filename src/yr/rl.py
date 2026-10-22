@@ -201,11 +201,12 @@ def run(cfg: dict, log) -> dict:
             scores = score_actions(models, seq_prompts, actions, seq_stats, item_feats, items, cfg, device)
             rewards = _reward(scores, seq_prompts, actions, item_feats_np, cfg)
             ret = _returns(rewards, rl["gamma"])
+            hz = int(rl["horizon"])
             if rl["method"] == "grpo":
                 adv = torch.tensor(_advantages(ret, g, rl["clip_adv"]), device=device)
-                lp = sequence_logprobs(policy, seq_prompts, actions, cfg["data"]["max_seq_len"], device)
+                lp = sequence_logprobs(policy, seq_prompts, actions, cfg["data"]["max_seq_len"], device) / hz
                 with torch.no_grad():
-                    lp_ref = sequence_logprobs(ref, seq_prompts, actions, cfg["data"]["max_seq_len"], device)
+                    lp_ref = sequence_logprobs(ref, seq_prompts, actions, cfg["data"]["max_seq_len"], device) / hz
                 diff = lp - lp_ref
                 kl = (diff.exp() - diff - 1).mean()
                 loss = -(adv * lp).mean() + rl["kl_beta"] * kl
@@ -215,18 +216,18 @@ def run(cfg: dict, log) -> dict:
                 pw = [batch_prompts[i] for i in range(len(batch_prompts))]
                 aw = [actions[i * g + int(best[i])] for i in range(len(batch_prompts))]
                 al = [actions[i * g + int(worst[i])] for i in range(len(batch_prompts))]
-                lp_w = sequence_logprobs(policy, pw, aw, cfg["data"]["max_seq_len"], device)
-                lp_l = sequence_logprobs(policy, pw, al, cfg["data"]["max_seq_len"], device)
+                lp_w = sequence_logprobs(policy, pw, aw, cfg["data"]["max_seq_len"], device) / hz
+                lp_l = sequence_logprobs(policy, pw, al, cfg["data"]["max_seq_len"], device) / hz
                 with torch.no_grad():
-                    ref_w = sequence_logprobs(ref, pw, aw, cfg["data"]["max_seq_len"], device)
-                    ref_l = sequence_logprobs(ref, pw, al, cfg["data"]["max_seq_len"], device)
+                    ref_w = sequence_logprobs(ref, pw, aw, cfg["data"]["max_seq_len"], device) / hz
+                    ref_l = sequence_logprobs(ref, pw, al, cfg["data"]["max_seq_len"], device) / hz
                 margin = (lp_w - lp_l) - (ref_w - ref_l)
                 loss = -F.logsigmoid(0.1 * margin).mean()
                 kl = torch.tensor(0.0)
             elif rl["method"] == "filtered_bc":
                 best = ret.reshape(-1, g).argmax(1)
                 ba = [actions[i * g + int(best[i])] for i in range(len(batch_prompts))]
-                lp = sequence_logprobs(policy, batch_prompts, ba, cfg["data"]["max_seq_len"], device)
+                lp = sequence_logprobs(policy, batch_prompts, ba, cfg["data"]["max_seq_len"], device) / hz
                 loss = -lp.mean()
                 kl = torch.tensor(0.0)
             else:
