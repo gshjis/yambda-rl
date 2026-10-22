@@ -14,3 +14,4 @@ figures/*
 !figures/.gitkeep
 
 .cortexkit/
+.opencode/

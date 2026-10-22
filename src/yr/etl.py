@@ -1,5 +1,8 @@
 """ETL: raw Yambda-50M -> flat numpy sequences, targets and item metadata.
 
+Training histories keep every listen. Evaluation targets follow the official
+protocol: a listen is relevant when `played_ratio_pct >= 50`.
+
 The public Kaggle mirror ships the official train/val/test split. When only the
 raw HF parquet is available we reproduce the official global temporal split
 (train / 30 min gap / 1 day val / 30 min gap / 1 day test).
@@ -17,7 +20,7 @@ import numpy as np
 
 from .utils import Timer, json_dump
 
-LISTEN = "listen"
+ACTIVE_HORIZON = 7 * 86400
 
 
 def _discover(cfg: dict) -> dict:
@@ -33,12 +36,9 @@ def _discover(cfg: dict) -> dict:
         }
     listens = sorted(glob.glob(os.path.join(root, "**", "flat", "50m", "listens.parquet"), recursive=True))
     if listens:
-        likes = listens[0].replace("listens.parquet", "likes.parquet")
-        return {"kind": "flat", "listens": listens[0], "likes": likes}
-    raise FileNotFoundError(
-        f"no Yambda-50M parquet under {root}; attach dinaryakupov/yambda-50m-compressed "
-        "or run with --source hf"
-    )
+        return {"kind": "flat", "listens": listens[0],
+                "likes": listens[0].replace("listens.parquet", "likes.parquet")}
+    raise FileNotFoundError(f"no Yambda-50M parquet under {root}")
 
 
 def _download(cfg: dict) -> dict:
@@ -60,121 +60,98 @@ def _columns(con, path: str) -> list[str]:
     return [r[0] for r in con.sql(f"DESCRIBE SELECT * FROM read_parquet('{path}')").fetchall()]
 
 
-def _where(event_col: bool, batch) -> str:
-    parts = []
-    if event_col:
-        parts.append("event_type = 'listen'")
-    parts.append(f"played_ratio_pct >= {int(batch['data']['min_played_ratio'])}")
-    return " WHERE " + " AND ".join(parts)
+def _fetch(con, sql: str, n: int, dtypes: dict) -> dict:
+    """Stream a big result into preallocated numpy arrays."""
+    out = {k: np.empty(n, dtype=dt) for k, dt in dtypes.items()}
+    i = 0
+    for batch in con.execute(sql).fetch_record_batch(4_000_000):
+        size = batch.num_rows
+        for k in dtypes:
+            out[k][i : i + size] = batch.column(batch.schema.get_field_index(k)).to_numpy(zero_copy_only=False)
+        i += size
+    assert i == n, (i, n)
+    return out
 
 
-def _series(con, sql: str) -> dict:
-    """Run an aggregate query and flatten list columns into numpy arrays."""
-    tbl = con.sql(sql).arrow()
-    cols = [c for c in tbl.column_names if c != "uid"]
-    out = {c: [] for c in cols}
-    uids = []
-    for batch in tbl.to_batches(max_chunksize=256):
-        for row in batch.to_pylist():
-            uids.append(int(row["uid"]))
-            for c in cols:
-                out[c].append(row[c])
-    return {"uids": np.asarray(uids, dtype=np.int64), **out}
+def _bounds(uid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    change = np.flatnonzero(np.diff(uid)) + 1
+    offsets = np.concatenate([[0], change, [len(uid)]]).astype(np.int64)
+    return uid[offsets[:-1]], offsets
 
 
-def _flatten(rows: list[list], dtype) -> tuple[np.ndarray, np.ndarray]:
-    lengths = np.fromiter((len(x) for x in rows), dtype=np.int64, count=len(rows))
-    offsets = np.zeros(len(rows) + 1, dtype=np.int64)
-    np.cumsum(lengths, out=offsets[1:])
-    flat = np.fromiter((v for x in rows for v in x), dtype=dtype, count=int(offsets[-1]))
-    return flat, offsets
+def _map_items(item: np.ndarray, vocab: np.ndarray) -> np.ndarray:
+    idx = np.searchsorted(vocab, item)
+    bad = (idx >= len(vocab)) | (vocab[np.minimum(idx, len(vocab) - 1)] != item)
+    if bad.any():
+        raise ValueError(f"{int(bad.sum())} items outside the vocabulary")
+    return idx.astype(np.int32)
 
 
-def _map_ids(rows: list[list], vocab_sorted: np.ndarray) -> list[np.ndarray]:
-    """Map raw item ids to contiguous indices via binary search."""
-    mapped = []
-    for x in rows:
-        arr = np.asarray(x, dtype=np.int64)
-        idx = np.searchsorted(vocab_sorted, arr)
-        if idx.size and (idx.max() >= len(vocab_sorted) or not np.array_equal(vocab_sorted[idx], arr)):
-            raise ValueError("item outside vocabulary")
-        mapped.append(idx.astype(np.int32))
-    return mapped
-
-
-def _event_labels(ts: np.ndarray, active_days: int = 7) -> tuple[np.ndarray, np.ndarray]:
-    """dt to the next listen (capped) and whether the user listens again within 7 days."""
-    dt = np.full(len(ts), -1, dtype=np.int32)
-    if len(ts) > 1:
-        dt[:-1] = np.diff(ts)
-    horizon = active_days * 86400
-    # last event of the user has no future, so no continuation and no return
-    active = np.zeros(len(ts), dtype=bool)
-    if len(ts) > 1:
-        end = np.searchsorted(ts, ts[:-1] + horizon, side="right")
-        active[:-1] = end > np.arange(1, len(ts))
-    return dt, active
-
-
-def _save_sequences(path: str, user_rows: dict, vocab_sorted: np.ndarray, batch: dict) -> dict:
-    uids = user_rows["uids"]
-    items = _map_ids(user_rows["items"], vocab_sorted)
-    ts_rows = user_rows["ts"]
-    ratio_rows = user_rows["ratio"]
-    organic_rows = user_rows["organic"]
-    liked_rows = user_rows["liked"]
-
-    items_flat, offsets = _flatten(items, np.int32)
-    ts_flat = np.fromiter((v for x in ts_rows for v in x), dtype=np.int32, count=len(items_flat))
-    ratio_flat = np.fromiter((int(v) for x in ratio_rows for v in x), dtype=np.uint8, count=len(items_flat))
-    organic_flat = np.fromiter((int(v) for x in organic_rows for v in x), dtype=np.uint8,
-                               count=len(items_flat)).astype(bool)
-    liked_flat = np.fromiter((int(v) for x in liked_rows for v in x), dtype=np.uint8,
-                             count=len(items_flat)).astype(bool)
-
-    dt_flat = np.zeros(len(items_flat), dtype=np.int32)
-    active_flat = np.zeros(len(items_flat), dtype=bool)
-    for i in range(len(uids)):
-        lo, hi = offsets[i], offsets[i + 1]
-        dt_flat[lo:hi], active_flat[lo:hi] = _event_labels(ts_flat[lo:hi])
-
-    np.savez(
-        path,
-        uids=uids,
-        offsets=offsets,
-        items=items_flat,
-        ts=ts_flat,
-        ratio=ratio_flat,
-        organic=organic_flat,
-        liked=liked_flat,
-        dt_next=dt_flat,
-        active7=active_flat,
+def _load_seq(con, table: str, vocab: np.ndarray, liked: bool = True) -> dict:
+    n = int(con.sql(f"SELECT count(*) FROM {table}").fetchone()[0])
+    liked_expr = "liked" if liked else "FALSE AS liked"
+    sql = (
+        f"SELECT uid, item_id, timestamp, played_ratio_pct, is_organic, {liked_expr} FROM {table} "
+        "ORDER BY uid, timestamp, item_id"
     )
+    raw = _fetch(
+        con, sql, n,
+        {"uid": np.int64, "item_id": np.int64, "timestamp": np.int64,
+         "played_ratio_pct": np.float64, "is_organic": np.uint8, "liked": np.uint8},
+    )
+    uids, offsets = _bounds(raw["uid"])
+    ts = raw["timestamp"].astype(np.int32)
+    dt = np.full(n, -1, dtype=np.int32)
+    if n > 1:
+        d = np.diff(ts)
+        dt[:-1] = np.where(d > 0, d, 0)
+    active = np.zeros(n, dtype=bool)
+    for lo, hi in zip(offsets[:-1], offsets[1:]):
+        if hi - lo < 2:
+            continue
+        seg = ts[lo:hi]
+        nxt = np.searchsorted(seg, seg + ACTIVE_HORIZON, side="right")
+        active[lo:hi] = nxt > np.arange(1, hi - lo + 1)
+        dt[hi - 1] = -1
     return {
-        "users": int(len(uids)),
-        "events": int(len(items_flat)),
-        "median_len": float(np.median(np.diff(offsets))),
-        "p90_len": float(np.percentile(np.diff(offsets), 90)),
+        "uids": uids,
+        "offsets": offsets,
+        "items": _map_items(raw["item_id"], vocab),
+        "ts": ts,
+        "ratio": np.clip(raw["played_ratio_pct"], 0, 255).astype(np.uint8),
+        "organic": raw["is_organic"].astype(bool),
+        "liked": raw["liked"].astype(bool),
+        "dt_next": dt,
+        "active7": active,
     }
 
 
-def _targets_from_seq(path: str, seq: dict, keep_uids: set[int]) -> dict:
-    keep = [i for i, u in enumerate(seq["uids"]) if int(u) in keep_uids]
-    items = [seq["items"][i] for i in keep]
-    flat, offsets = _flatten(items, np.int32)
-    np.savez(path, uids=seq["uids"][keep], offsets=offsets, items=flat)
+def _save_seq(path: str, seq: dict) -> dict:
+    np.savez(path, **seq)
+    lengths = np.diff(seq["offsets"])
     return {
-        "users": int(len(keep)),
-        "events": int(len(flat)),
-        "targets_per_user": float(np.mean(np.diff(offsets))) if len(keep) else 0.0,
+        "users": int(len(seq["uids"])),
+        "events": int(len(seq["items"])),
+        "median_len": float(np.median(lengths)) if len(lengths) else 0.0,
+        "p90_len": float(np.percentile(lengths, 90)) if len(lengths) else 0.0,
     }
+
+
+def _subset_targets(seq: dict, min_ratio: int, keep_uids: np.ndarray) -> dict:
+    lens = np.diff(seq["offsets"])
+    uid_ev = np.repeat(seq["uids"], lens)
+    mask = (seq["ratio"] >= min_ratio) & np.isin(uid_ev, keep_uids)
+    uids, offsets = _bounds(uid_ev[mask])
+    return {"uids": uids, "offsets": offsets, "items": seq["items"][mask].astype(np.int32)}
 
 
 def run(cfg: dict, log, source: str = "auto") -> dict:
     os.makedirs(cfg["data_dir"], exist_ok=True)
     con = duckdb.connect()
     con.execute("PRAGMA threads=4")
-    con.execute("PRAGMA memory_limit='6GB'")
+    con.execute(f"PRAGMA memory_limit='{cfg.get('duckdb_memory', '12GB')}'")
+    con.execute(f"PRAGMA temp_directory='{os.path.join(cfg['work_dir'], 'duckdb_tmp')}'")
+    con.execute("PRAGMA preserve_insertion_order=false")
 
     if source == "hf":
         paths = _download(cfg)
@@ -192,57 +169,38 @@ def run(cfg: dict, log, source: str = "auto") -> dict:
     with Timer(log, "load + split"):
         if paths["kind"] == "multi_event":
             cols = _columns(con, paths["train"])
-            has_event = "event_type" in cols
-            log.info("columns: %s, event_type=%s", cols, has_event)
-            con.execute(f"CREATE VIEW train_raw AS SELECT * FROM read_parquet('{paths['train']}')")
-            con.execute(f"CREATE VIEW val_raw AS SELECT * FROM read_parquet('{paths['val']}')")
-            con.execute(f"CREATE VIEW test_raw AS SELECT * FROM read_parquet('{paths['test']}')")
-            if not has_event:
+            if "event_type" not in cols:
                 raise ValueError("multi_event file has no event_type column")
-            ev = con.sql("SELECT event_type, count(*) n FROM train_raw GROUP BY 1 ORDER BY 2 DESC").fetchall()
-            log.info("event types: %s", ev)
             tcol = "track_length_seconds" if "track_length_seconds" in cols else "track_length"
             for name in ("train", "val", "test"):
-                t = con.sql(f"SELECT min(timestamp), max(timestamp), count(*) FROM {name}_raw").fetchone()
-                stats["splits"][name + "_raw"] = {"min_ts": int(t[0]), "max_ts": int(t[1]), "rows": int(t[2])}
+                con.execute(f"CREATE VIEW {name}_raw AS SELECT * FROM read_parquet('{paths[name]}')")
+            ev = con.sql("SELECT event_type, count(*) n FROM train_raw GROUP BY 1 ORDER BY 2 DESC").fetchall()
+            log.info("event types: %s", ev)
         else:
-            has_event = False
-            lcols = _columns(con, paths["listens"])
-            tcol = "track_length_seconds" if "track_length_seconds" in lcols else "track_length"
-            con.execute(
-                f"CREATE VIEW listens AS SELECT *, 'listen' AS event_type FROM read_parquet('{paths['listens']}')"
-            )
-            con.execute(
-                f"CREATE VIEW likes AS SELECT *, 'like' AS event_type FROM read_parquet('{paths['likes']}')"
-            )
+            tcol = "track_length_seconds" if "track_length_seconds" in _columns(con, paths["listens"]) else "track_length"
+            con.execute(f"CREATE VIEW listens AS SELECT *, 'listen' AS event_type FROM read_parquet('{paths['listens']}')")
+            con.execute(f"CREATE VIEW likes AS SELECT *, 'like' AS event_type FROM read_parquet('{paths['likes']}')")
             con.execute("CREATE VIEW raw AS SELECT * FROM listens UNION ALL BY NAME SELECT * FROM likes")
-            t = con.sql("SELECT min(timestamp), max(timestamp), count(*) FROM raw").fetchone()
-            log.info("raw timestamps: %s .. %s (%s rows)", t[0], t[1], t[2])
+            t = con.sql("SELECT min(timestamp), max(timestamp) FROM raw").fetchone()
             test_ts = int(cfg["data"]["last_timestamp"]) - int(cfg["data"]["test_size"])
             val_ts = test_ts - int(cfg["data"]["gap_size"]) - int(cfg["data"]["val_size"])
             train_end = val_ts - int(cfg["data"]["gap_size"])
-            if not (train_end < val_ts < test_ts <= int(t[1]) + 1):
-                raise ValueError(f"official split does not fit data range: {t[0]}..{t[1]}")
-            con.execute(
-                f"CREATE VIEW train_raw AS SELECT * FROM raw WHERE timestamp < {train_end}"
-            )
-            con.execute(
-                f"CREATE VIEW val_raw AS SELECT * FROM raw WHERE timestamp >= {val_ts} AND timestamp < {test_ts - int(cfg['data']['gap_size'])}"
-            )
+            con.execute(f"CREATE VIEW train_raw AS SELECT * FROM raw WHERE timestamp < {train_end}")
+            con.execute(f"CREATE VIEW val_raw AS SELECT * FROM raw WHERE timestamp >= {val_ts} AND timestamp < {test_ts - int(cfg['data']['gap_size'])}")
             con.execute(f"CREATE VIEW test_raw AS SELECT * FROM raw WHERE timestamp >= {test_ts}")
             stats["split_bounds"] = {"train_end": train_end, "val": val_ts, "test": test_ts}
-            has_event = True
+            log.info("flat split bounds: %s (data %s..%s)", stats["split_bounds"], t[0], t[1])
 
-    where = _where(has_event, cfg)
-    with Timer(log, "listen aggregation"):
-        for name in ("train", "val", "test"):
-            con.execute(
-                f"CREATE VIEW {name}_listens AS SELECT uid, item_id, timestamp, played_ratio_pct, "
-                f"is_organic, {tcol} AS track_length FROM {name}_raw{where}"
-            )
-            n = con.sql(f"SELECT count(*) FROM {name}_listens").fetchone()[0]
-            stats["splits"][name] = {"listens": int(n)}
-            log.info("%s listens: %s", name, n)
+    for name in ("train", "val", "test"):
+        con.execute(
+            f"CREATE VIEW {name}_listens AS SELECT uid, item_id, timestamp, played_ratio_pct, "
+            f"is_organic, {tcol} AS track_length FROM {name}_raw WHERE event_type = 'listen'"
+        )
+        row = con.sql(f"SELECT count(*), count(DISTINCT uid), count(DISTINCT item_id), min(timestamp), max(timestamp) "
+                      f"FROM {name}_listens").fetchone()
+        stats["splits"][name] = {"listens": int(row[0]), "users": int(row[1]), "items": int(row[2]),
+                                 "min_ts": int(row[3]), "max_ts": int(row[4])}
+        log.info("%s listens: %s", name, row)
 
     with Timer(log, "vocabulary"):
         con.execute(
@@ -253,77 +211,55 @@ def run(cfg: dict, log, source: str = "auto") -> dict:
         )
         vocab = con.sql("SELECT item_id FROM vocab ORDER BY item_id").fetchnumpy()["item_id"].astype(np.int64)
         stats["vocab_size"] = int(len(vocab))
+        log.info("vocab: %d", len(vocab))
 
     with Timer(log, "likes"):
-        if has_event:
-            con.execute(
-                "CREATE TABLE liked_items AS SELECT DISTINCT uid, item_id FROM train_raw WHERE event_type = 'like'"
-            )
-        else:
-            con.execute("CREATE TABLE liked_items AS SELECT DISTINCT uid, item_id FROM likes")
-        con.execute(
-            "CREATE VIEW train_events AS SELECT t.*, (l.item_id IS NOT NULL) AS liked "
-            "FROM train_listens t LEFT JOIN liked_items l USING (uid, item_id)"
-        )
-
-    seq_sql = (
-        "SELECT uid, list(item_id ORDER BY timestamp, item_id) items, "
-        "list(timestamp ORDER BY timestamp, item_id) ts, "
-        "list(played_ratio_pct ORDER BY timestamp, item_id) ratio, "
-        "list(is_organic ORDER BY timestamp, item_id) organic, "
-        "list(liked ORDER BY timestamp, item_id) liked "
-    )
-    seqs = {}
-    for name in ("train", "val", "test"):
-        with Timer(log, f"{name} sequences"):
-            if name == "train":
-                inner = "train_events t"
-            else:
-                inner = (
-                    f"(SELECT t.*, (l.item_id IS NOT NULL) AS liked FROM {name}_listens t "
-                    "LEFT JOIN liked_items l USING (uid, item_id)) t"
-                )
-            rows = _series(con, seq_sql + f"FROM {inner} GROUP BY uid ORDER BY uid")
-            seqs[name] = {
-                "uids": rows["uids"],
-                "items": _map_ids(rows["items"], vocab),
-            }
-            stats["splits"][name].update(_save_sequences(
-                os.path.join(cfg["data_dir"], f"{name}_seq.npz"), rows, vocab, cfg
-            ))
-    train_uids = set(seqs["train"]["uids"].tolist())
-
-    with Timer(log, "val/test targets"):
+        con.execute("CREATE TABLE liked_items AS SELECT DISTINCT uid, item_id "
+                    "FROM train_raw WHERE event_type = 'like'")
+        con.execute("CREATE VIEW train_events AS SELECT t.*, (l.item_id IS NOT NULL) AS liked "
+                    "FROM train_listens t LEFT JOIN liked_items l USING (uid, item_id)")
         for name in ("val", "test"):
-            stats["splits"][name].update(_targets_from_seq(
-                os.path.join(cfg["data_dir"], f"{name}_targets.npz"), seqs[name], train_uids
-            ))
+            con.execute(
+                f"CREATE VIEW {name}_events AS SELECT t.*, (l.item_id IS NOT NULL) AS liked "
+                f"FROM {name}_listens t LEFT JOIN liked_items l USING (uid, item_id)"
+            )
+
+    with Timer(log, "sequences"):
+        seqs = {}
+        for name in ("train", "val", "test"):
+            seqs[name] = _load_seq(con, f"{name}_events", vocab)
+            stats["splits"][name].update(_save_seq(os.path.join(cfg["data_dir"], f"{name}_seq.npz"), seqs[name]))
+            log.info("%s sequence: %s", name, stats["splits"][name])
+
+    train_uids = seqs["train"]["uids"]
+    with Timer(log, "targets"):
+        for name in ("val", "test"):
+            tgt = _subset_targets(seqs[name], int(cfg["data"]["min_played_ratio"]), train_uids)
+            np.savez(os.path.join(cfg["data_dir"], f"{name}_targets.npz"), **tgt)
+            stats["splits"][name]["targets"] = int(len(tgt["items"]))
+            stats["splits"][name]["target_users"] = int(len(tgt["uids"]))
+            log.info("%s targets: %d events / %d users", name, len(tgt["items"]), len(tgt["uids"]))
 
     with Timer(log, "test history"):
-        hist_sql = (
-            "SELECT uid, list(item_id ORDER BY timestamp, item_id) items FROM ("
-            "SELECT uid, item_id, timestamp FROM train_listens UNION ALL "
-            "SELECT uid, item_id, timestamp FROM val_listens) GROUP BY uid ORDER BY uid"
+        con.execute(
+            "CREATE VIEW history_events AS SELECT uid, item_id, timestamp, 'listen' AS event_type "
+            "FROM train_listens UNION ALL SELECT uid, item_id, timestamp, 'listen' FROM val_listens"
         )
-        rows_h = _series(con, hist_sql)
-        keep = np.array([i for i, u in enumerate(rows_h["uids"]) if int(u) in train_uids], dtype=np.int64)
-        hist_items = _map_ids([rows_h["items"][i] for i in keep], vocab)
-        flat, offsets = _flatten(hist_items, np.int32)
-        np.savez(
-            os.path.join(cfg["data_dir"], "test_history.npz"),
-            uids=rows_h["uids"][keep],
-            offsets=offsets,
-            items=flat,
-        )
-        stats["test_history"] = {"users": int(len(keep)), "events": int(len(flat))}
+        hist = _load_seq(con, "history_events", vocab, liked=False)
+        uid_ev = np.repeat(hist["uids"], np.diff(hist["offsets"]))
+        keep_ev = np.isin(uid_ev, train_uids)
+        uids, offsets = _bounds(uid_ev[keep_ev])
+        items = hist["items"][keep_ev]
+        np.savez(os.path.join(cfg["data_dir"], "test_history.npz"), uids=uids, offsets=offsets, items=items)
+        stats["test_history"] = {"users": int(len(uids)), "events": int(len(items))}
+        log.info("test history: %s", stats["test_history"])
 
     with Timer(log, "item metadata"):
-        meta = con.sql(
+        df = con.sql(
             "SELECT item_id, count(*) n, avg(played_ratio_pct) mean_ratio, "
             "avg(track_length) mean_length, avg(is_organic::INT) organic_share "
             "FROM train_listens GROUP BY item_id"
-        ).arrow()
-        df = meta.to_pandas()
+        ).arrow().to_pandas()
         counts = np.zeros(len(vocab), dtype=np.int32)
         mean_ratio = np.full(len(vocab), np.nan, dtype=np.float32)
         mean_length = np.full(len(vocab), np.nan, dtype=np.float32)
@@ -333,21 +269,15 @@ def run(cfg: dict, log, source: str = "auto") -> dict:
         mean_ratio[idx] = df["mean_ratio"].to_numpy()
         mean_length[idx] = df["mean_length"].to_numpy()
         organic_share[idx] = df["organic_share"].to_numpy()
-        like_counts = con.sql(
-            "SELECT item_id, count(*) n FROM train_events WHERE liked GROUP BY item_id"
-        ).arrow().to_pandas()
+        like_counts = con.sql("SELECT item_id, count(*) n FROM train_events WHERE liked GROUP BY item_id").arrow().to_pandas()
         like_rate = np.zeros(len(vocab), dtype=np.float32)
         if len(like_counts):
-            idx_l = np.searchsorted(vocab, like_counts["item_id"].to_numpy())
-            like_rate[idx_l] = like_counts["n"].to_numpy() / np.maximum(counts[idx_l], 1)
+            li = np.searchsorted(vocab, like_counts["item_id"].to_numpy())
+            like_rate[li] = like_counts["n"].to_numpy() / np.maximum(counts[li], 1)
         np.savez(
             os.path.join(cfg["data_dir"], "items.npz"),
-            item_ids=vocab.astype(np.int32),
-            counts=counts,
-            mean_ratio=mean_ratio,
-            mean_length=mean_length,
-            organic_share=organic_share,
-            like_rate=like_rate,
+            item_ids=vocab.astype(np.int32), counts=counts, mean_ratio=mean_ratio,
+            mean_length=mean_length, organic_share=organic_share, like_rate=like_rate,
         )
         stats["items_without_train_listens"] = int((counts == 0).sum())
         stats["items_without_train_listens_share"] = float((counts == 0).mean())

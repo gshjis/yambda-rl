@@ -102,7 +102,10 @@ def main() -> None:
         ok = True
     finally:
         log.info("finished stage %s in %.1f min, ok=%s", args.stage, (time.time() - t0) / 60, ok)
-        if ok and not cfg.get("keep_data", False):
+        stats = os.path.join(cfg["data_dir"], "stats.json")
+        if os.path.exists(stats):
+            shutil.copy(stats, os.path.join(cfg["out_dir"], "stats.json"))
+        if not cfg.get("keep_data", False):
             shutil.rmtree(cfg["data_dir"], ignore_errors=True)
             shutil.rmtree(os.path.join(cfg["out_dir"], "ckpt"), ignore_errors=True)
             for f in os.listdir(cfg["out_dir"]):
