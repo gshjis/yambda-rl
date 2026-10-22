@@ -65,15 +65,13 @@ class GPT(nn.Module):
 
 
 def sampled_softmax_loss(h: torch.Tensor, targets: torch.Tensor, item_emb: torch.Tensor,
-                         mask: torch.Tensor | None = None, uniform_neg: int = 1024,
-                         generator: torch.Generator | None = None) -> torch.Tensor:
-    """In-batch + uniform negatives. h: (B,T,d), targets: (B,T), item_emb: (V,d)."""
-    b, t, d = h.shape
-    h = h.reshape(-1, d)
+                         uniform_neg: int = 1024, generator: torch.Generator | None = None) -> torch.Tensor:
+    """In-batch + uniform negatives. h: (B,d) or (B,T,d); targets broadcastable to h's rows."""
+    if h.dim() == 3:
+        h = h.reshape(-1, h.shape[-1])
+        targets = targets.reshape(-1)
+    h = h.reshape(-1, h.shape[-1])
     targets = targets.reshape(-1)
-    if mask is not None:
-        valid = mask.reshape(-1)
-        h, targets = h[valid], targets[valid]
     if h.numel() == 0:
         return h.sum() * 0.0
     uniq, inv = torch.unique(targets, return_inverse=True)
