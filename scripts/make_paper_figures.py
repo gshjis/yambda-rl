@@ -55,12 +55,16 @@ def fig_training(art: str, out: str) -> None:
     steps = np.array([e["step"] for e in h if "loss" in e])
     loss = np.array([e["loss"] for e in h if "loss" in e])
     ev = [e for e in h if "val_ndcg@10" in e]
+    ckpt_step = max(ev, key=lambda e: e["val_ndcg@10"])["step"] if ev else 0
     pop = load(art, "metrics_popularity.json")["summary"]["ndcg@10"]
 
     fig, ax = plt.subplots(1, 2, figsize=(11, 3.8))
     ax[0].plot(steps, loss, color=GREY, lw=0.5, alpha=0.6, label="по шагам")
     ax[0].plot(steps[len(steps) - len(rolling(loss, 25)):], rolling(loss, 25),
                color=ORANGE, lw=2.2, label="скользящее среднее")
+    ax[0].axvline(ckpt_step, ls=":", color=BLUE, lw=1.2)
+    ax[0].text(ckpt_step, ax[0].get_ylim()[0], f" чекпоинт {ckpt_step}", color=BLUE,
+               fontsize=9, va="bottom")
     ax[0].set(xlabel="Шаг обучения", ylabel="Sampled softmax loss")
     ax[0].set_title("(а) Лосс базовой модели", loc="left", fontweight="bold")
     ax[0].legend(frameon=False)
@@ -70,8 +74,9 @@ def fig_training(art: str, out: str) -> None:
         if "val_recall@100" in ev[0]:
             ax[1].plot(es, [e["val_recall@100"] for e in ev], "-s", color=BLUE, label="Recall@100")
     ax[1].axhline(pop, ls="--", color=GREY, lw=1.2)
-    ax[1].text(0.05, pop + 0.002, "популярностный baseline, NDCG@10", color=GREY,
-               fontsize=9, transform=ax[1].get_yaxis_transform())
+    ax[1].text(0.02, pop + 0.0006, "популярностный baseline, NDCG@10", color=GREY,
+               fontsize=8, va="bottom", transform=ax[1].get_yaxis_transform())
+    ax[1].set_ylim(top=max(max([e["val_ndcg@10"] for e in ev] + [pop]) * 1.12, pop + 0.004))
     ax[1].set(xlabel="Шаг обучения", ylabel="Метрика на val")
     ax[1].set_title("(б) Качество на валидации", loc="left", fontweight="bold")
     ax[1].legend(frameon=False)
