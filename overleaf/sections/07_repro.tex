@@ -1,0 +1,47 @@
+\appendix
+\section{Воспроизведение}
+
+\paragraph{Данные.} Публичный зеркальный датасет
+\code{dinaryakupov/yambda-50m-compressed} (официальное разбиение
+\code{multi\_event\_\{train,val,test\}.parquet}) подключается к ядру Kaggle
+как входной датасет; вычислительный диск содержит только производные
+артефакты.
+
+\paragraph{Код.} Пакет \code{src/yr/} с единственной точкой входа
+\code{run.py}, стадии: \code{etl}, \code{eda}, \code{baseline},
+\code{train}, \code{eval}, \code{rm}, \code{rl}, \code{analyze},
+\code{ablate}, \code{all}. Одна стадия --- одно ядро, что укладывается в
+12-часовой лимит сессии. Гиперпараметры --- \code{configs/default.yaml}.
+
+\paragraph{Запуск.}
+\begin{verbatim}
+scripts/kaggle_run.sh all --quick   # дымовой прогон, ~8 минут
+scripts/kaggle_run.sh all           # полный прогон
+\end{verbatim}
+
+Скрипт фиксирует SHA текущего коммита в метаданных ядра, поэтому изменения
+кода во время прогона в него не попадают; исправление требует перезапуска
+стадии.
+
+\paragraph{Артефакты прогона.}
+\begin{itemize}[leftmargin=1.2em,itemsep=1pt,topsep=2pt]
+  \item \code{metrics\_base.json}, \code{metrics\_rl\_grpo.json},
+        \code{metrics\_popularity.json} --- метрики по полному каталогу;
+  \item \code{metrics\_rl\_grpo\_train.json} --- 64 шага RL (награда, KL,
+        уникальность айтемов);
+  \item \code{analysis.json} --- бутстрэп-интервалы, поведение выдачи,
+        многошаговая генерация;
+  \item \code{base\_ranked.npz}, \code{rl\_grpo\_ranked.npz} --- top-100
+        и per-user метрики, из которых строятся рисунки
+        \ref{fig:peruser} и \ref{fig:leaderboard};
+  \item \code{rm\_metrics.json} --- метрики голов reward model и ансамбля;
+  \item \code{runs/2026-10-22\_full\_run.log} --- сырой лог прогона,
+        без переформатирования.
+\end{itemize}
+
+\paragraph{Окружение.} Kaggle, GPU T4, PyTorch, DuckDB для ETL. ETL
+потоковый: прослушивания читаются record-batch'ами в предвыделенные массивы,
+поэтому вся таблица 46 млн строк не материализуется в памяти ядра.
+
+\paragraph{Время.} ETL 2.3 мин, обучение базовой модели около 4 минут, тест
+полного каталога 6 мин, reward model 15 мин, GRPO с анализом 4 мин.

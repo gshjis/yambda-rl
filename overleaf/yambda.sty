@@ -1,0 +1,47 @@
+%% yambda.sty — оформление отчёта по задаче T-Lab 2026 / RecSys 2
+%% Собирается на Overleaf (pdfLaTeX). Ничего, кроме стандартного TeX Live, не нужно.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{yambda}[2026/10/22 v1.0 Yambda RL report]
+
+\RequirePackage[T2A]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[english,russian]{babel}
+\RequirePackage{geometry}
+\geometry{top=2.4cm,bottom=2.6cm,left=2.5cm,right=2.5cm}
+
+\RequirePackage{amsmath,amssymb}
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage{tabularx}
+\RequirePackage{array}
+\RequirePackage{enumitem}
+\RequirePackage{xcolor}
+\RequirePackage[font=small,labelfont=bf,format=plain,skip=6pt]{caption}
+\RequirePackage{tcolorbox}
+\RequirePackage[hidelinks]{hyperref}
+
+%% палитра Okabe–Ito: та же, что в графиках
+\definecolor{yrorange}{HTML}{D55E00}
+\definecolor{yrblue}{HTML}{0072B2}
+\definecolor{yrgreen}{HTML}{009E73}
+\definecolor{yrpink}{HTML}{CC79A7}
+\definecolor{yrgrey}{HTML}{6B7780}
+
+\setlength{\parskip}{2pt}
+\setlength{\parindent}{1.2em}
+\linespread{1.06}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\ym}[1]{\ensuremath{#1}}
+
+%% врезка для главного вывода раздела
+\newtcolorbox{keybox}[1]{colback=yrorange!5,colframe=yrorange!75!black,
+  boxrule=0.6pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=5pt,
+  fonttitle=\bfseries\small,title={#1}}
+
+%% компактные таблицы
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\renewcommand{\arraystretch}{1.12}
+
+\captionsetup[table]{position=top}
